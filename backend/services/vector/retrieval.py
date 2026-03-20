@@ -10,14 +10,20 @@ This implementation keeps dependencies minimal:
 from typing import Dict, List, Any, Tuple
 import math
 import re
+import logging
+import hashlib
 from neo4j import GraphDatabase
 from config.settings import Settings
+
+logger = logging.getLogger(__name__)
 
 
 class VectorRetrieval:
     """Provides vector-style retrieval for unstructured text memories."""
 
     EMBEDDING_DIM = 256
+    MAX_CANDIDATES = 500
+    SNIPPET_MAX_LENGTH = 220
 
     def __init__(self):
         """Initialize Neo4j connection."""
@@ -28,7 +34,7 @@ class VectorRetrieval:
             )
             self.driver.verify_connectivity()
         except Exception as e:
-            print(f"Warning: Could not connect to Neo4j for vector retrieval: {e}")
+            logger.warning("Could not connect to Neo4j for vector retrieval: %s", e)
             self.driver = None
 
     def retrieve(
@@ -57,9 +63,10 @@ class VectorRetrieval:
                     WHERE f.text IS NOT NULL AND trim(f.text) <> ""
                     RETURN f.id AS id, f.text AS text, coalesce(f.confidence, 0.5) AS confidence
                     ORDER BY coalesce(f.updated_at, f.created_at, f.timestamp) DESC
-                    LIMIT 500
+                    LIMIT $limit
                     """,
                     user_id=user_id,
+                    limit=self.MAX_CANDIDATES,
                 )
                 candidates = [dict(r) for r in records]
 
@@ -72,7 +79,7 @@ class VectorRetrieval:
             for item in candidates:
                 text = item.get("text") or ""
                 score = self._cosine_similarity(query_vec, self._embed_text(text))
-                if score <= 0:
+                if score == 0.0:
                     continue
 
                 ranked.append(
@@ -80,7 +87,7 @@ class VectorRetrieval:
                         "type": "TextMemory",
                         "text": text,
                         "retrieval_score": round(score, 4),
-                        "snippet": text[:220],
+                        "snippet": text[:self.SNIPPET_MAX_LENGTH],
                         "properties": {
                             "id": item.get("id"),
                             "text": text,
@@ -94,7 +101,7 @@ class VectorRetrieval:
             return ranked[:top_k], (time.time() - start) * 1000
 
         except Exception as e:
-            print(f"Error during vector retrieval: {e}")
+            logger.exception("Error during vector retrieval: %s", e)
             return [], (time.time() - start) * 1000
 
     @classmethod
@@ -114,7 +121,7 @@ class VectorRetrieval:
             return vec
 
         for token in tokens:
-            idx = hash(token) % cls.EMBEDDING_DIM
+            idx = cls._stable_index(token)
             vec[idx] += 1.0
 
         norm = math.sqrt(sum(v * v for v in vec))
@@ -128,6 +135,13 @@ class VectorRetrieval:
         if not a or not b or len(a) != len(b):
             return 0.0
         return max(0.0, min(1.0, sum(x * y for x, y in zip(a, b))))
+
+    @classmethod
+    def _stable_index(cls, token: str) -> int:
+        """Map token to deterministic embedding index."""
+        digest = hashlib.sha256(token.encode("utf-8")).digest()
+        value = int.from_bytes(digest[:8], byteorder="big")
+        return value % cls.EMBEDDING_DIM
 
     def close(self):
         """Close Neo4j connection."""

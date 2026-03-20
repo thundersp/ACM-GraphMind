@@ -55,11 +55,21 @@ from services.vector.retrieval import VectorRetrieval
 
 
 class TestHybridRetrieval(unittest.TestCase):
-    def test_vector_embedding_is_stable_and_normalized(self):
+    def test_vector_embedding_uses_deterministic_token_index(self):
+        idx_a = VectorRetrieval._stable_index("coffee")
+        idx_b = VectorRetrieval._stable_index("coffee")
+        self.assertEqual(idx_a, idx_b)
+        self.assertGreaterEqual(idx_a, 0)
+        self.assertLess(idx_a, VectorRetrieval.EMBEDDING_DIM)
+
+    def test_vector_embedding_is_stable(self):
         vec1 = VectorRetrieval._embed_text("Bought groceries and paid rent")
         vec2 = VectorRetrieval._embed_text("Bought groceries and paid rent")
-        self.assertEqual(len(vec1), VectorRetrieval.EMBEDDING_DIM)
         self.assertEqual(vec1, vec2)
+
+    def test_vector_embedding_is_normalized(self):
+        vec1 = VectorRetrieval._embed_text("Bought groceries and paid rent")
+        self.assertEqual(len(vec1), VectorRetrieval.EMBEDDING_DIM)
         norm = sum(x * x for x in vec1) ** 0.5
         self.assertAlmostEqual(norm, 1.0, places=6)
 

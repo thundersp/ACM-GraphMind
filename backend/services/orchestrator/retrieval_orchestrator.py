@@ -256,8 +256,8 @@ class RetrievalOrchestrator:
         """Normalize vector context shape for prompt and citations."""
         normalized = []
         for item in vector_context:
-            normalized_item = dict(item)
-            props = dict(item.get("properties", {}))
+            normalized_item = item.copy()
+            props = item.get("properties", {}).copy()
             if "text" not in normalized_item and "text" in props:
                 normalized_item["text"] = props["text"]
             normalized_item["properties"] = props
