@@ -17,6 +17,7 @@ import time
 from services.graph.retrieval import GraphRetrieval
 from services.graph.query_decomposition import QueryDecomposition, QueryIntent
 from services.llm.answer_generator import AnswerGenerator
+from services.vector.retrieval import VectorRetrieval
 
 
 class RetrievalOrchestrator:
@@ -33,6 +34,7 @@ class RetrievalOrchestrator:
     def __init__(self):
         """Initialize all required services."""
         self.graph_retrieval = GraphRetrieval()
+        self.vector_retrieval = VectorRetrieval()
         self.query_decomposition = QueryDecomposition()
         self.answer_generator = AnswerGenerator()
     
@@ -75,25 +77,29 @@ class RetrievalOrchestrator:
         )
         full_retrieval_ms = (time.time() - retrieval_start) * 1000
         
-        # Step 3: Vector retrieval (placeholder for future)
-        vector_search_ms = 0.0
-        vector_context = []
+        # Step 3: Vector retrieval
+        vector_context, vector_search_ms = self.vector_retrieval.retrieve(
+            user_id=user_id,
+            query=query,
+            top_k=8
+        )
         
         # Step 4: Assemble context with enrichment (with timing)
         context_start = time.time()
         # Format graph context for LLM with decomposition insights
-        formatted_context = self._enrich_context(
+        formatted_graph_context = self._enrich_context(
             graph_context, 
             decomposed
         )
+        formatted_vector_context = self._enrich_vector_context(vector_context)
         context_assembly_ms = (time.time() - context_start) * 1000
         
         # Step 5: Generate answer using LLM (with timing)
         llm_start = time.time()
         answer = self.answer_generator.generate(
             query=query,
-            graph_context=formatted_context,
-            vector_context=vector_context,
+            graph_context=formatted_graph_context,
+            vector_context=formatted_vector_context,
             decomposed_query=decomposed  # Pass decomposition for better prompting
         )
         llm_generation_ms = (time.time() - llm_start) * 1000
@@ -113,10 +119,13 @@ class RetrievalOrchestrator:
         }
         
         # Step 7: Format memory citations with scores
-        memory_citations = self._format_memory_citations(formatted_context)
+        memory_citations = self._format_memory_citations(
+            formatted_graph_context,
+            formatted_vector_context
+        )
         
         # Step 8: DEFERRED REINFORCEMENT - Update cited nodes after answer generation
-        cited_node_ids = [node["properties"]["id"] for node in formatted_context[:10] 
+        cited_node_ids = [node["properties"]["id"] for node in formatted_graph_context[:10] 
                          if "properties" in node and "id" in node["properties"]]
         if cited_node_ids:
             self.graph_retrieval.reinforce_cited_nodes(user_id, cited_node_ids)
@@ -170,7 +179,8 @@ class RetrievalOrchestrator:
     
     def _format_memory_citations(
         self, 
-        graph_context: List[Dict[str, Any]]
+        graph_context: List[Dict[str, Any]],
+        vector_context: List[Dict[str, Any]]
     ) -> List[Dict[str, Any]]:
         """
         Format memory citations with retrieval scores for explainability.
@@ -220,11 +230,41 @@ class RetrievalOrchestrator:
                 }
             
             citations.append(citation)
+
+        # Add vector text memories as citations (top 5)
+        for item in vector_context[:5]:
+            props = item.get("properties", {})
+            citations.append({
+                "node_type": item.get("type", "TextMemory"),
+                "retrieval_score": item.get("retrieval_score", 0.0),
+                "hop_distance": "N/A",
+                "snippet": item.get("snippet", ""),
+                "properties": {
+                    "text": props.get("text", item.get("text", "")),
+                    "confidence": props.get("confidence", 0.0),
+                    "id": props.get("id")
+                },
+                "score_breakdown": None
+            })
         
         return citations
+
+    def _enrich_vector_context(
+        self,
+        vector_context: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """Normalize vector context shape for prompt and citations."""
+        normalized = []
+        for item in vector_context:
+            normalized_item = dict(item)
+            props = dict(item.get("properties", {}))
+            if "text" not in normalized_item and "text" in props:
+                normalized_item["text"] = props["text"]
+            normalized_item["properties"] = props
+            normalized.append(normalized_item)
+        return normalized
     
     def close(self):
         """Close all service connections."""
         self.graph_retrieval.close()
-        # TODO: Close vector services when implemented
-
+        self.vector_retrieval.close()

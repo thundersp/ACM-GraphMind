@@ -9,7 +9,7 @@ It stores chat memories in a Neo4j knowledge graph, persists chat/session histor
 - Multi-user auth with JWT + bcrypt
 - Strict user isolation for graph and chat history
 - Graph ingestion pipeline for chat messages and uploaded documents
-- Graph-only retrieval (no vector DB yet) with:
+- Hybrid retrieval (graph + vectorized text memories) with:
   - mode-based query planning
   - adaptive depth and adaptive `top_k`
   - timeline filtering
@@ -99,7 +99,7 @@ OpenAPI docs are available at:
 `/chat` returns retrieval and generation timings separately:
 
 - `graph_query_ms`
-- `vector_search_ms` (currently `0.0` placeholder)
+- `vector_search_ms`
 - `context_assembly_ms`
 - `retrieval_ms` (excludes LLM generation)
 - `llm_generation_ms`
